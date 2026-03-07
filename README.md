@@ -1,4 +1,4 @@
-# APRS Monitor V1.2 (ESP8266 + OLED 2.42" SSD1309) 📡
+# APRS Monitor V1.3 (ESP8266 + OLED 2.42" SSD1309) 📡
 
 ![License: GPL v3](https://img.shields.io/badge/License-Code%3A_GPLv3-blue.svg)
 ![License: CC BY-NC 4.0](https://img.shields.io/badge/License-Case%3A_CC_BY--NC_4.0-yellow.svg)
@@ -8,10 +8,18 @@
   <img src="img/startlogo.jpg" width="400" alt="APRS Monitor Start Screen">
 </p>
 
-**APRS Monitor V1.2** to rozbudowana wersja samodzielnego urządzenia opartego na mikrokontrolerze ESP8266, które łączy się z serwerami APRS-IS przez WiFi, nasłuchuje ruchu w określonym promieniu od Twojej lokalizacji i wyświetla informacje o stacjach na **dużym, czytelnym ekranie OLED 2.42"**.
+**APRS Monitor V1.3** to rozbudowana wersja samodzielnego urządzenia opartego na mikrokontrolerze ESP8266, które łączy się z serwerami APRS-IS przez WiFi, nasłuchuje ruchu w określonym promieniu od Twojej lokalizacji i wyświetla informacje o stacjach na **dużym, czytelnym ekranie OLED 2.42"**.
 
 **Autor:** Marcin "Skrętka" (SQ7UTP)
 📧 **Kontakt:** sq7utp@gmail.com
+
+## 🚀 Co nowego w najnowszej wersji? V1.3 (Aktualizacje i Poprawki)
+Projekt został znacząco rozbudowany o nowe funkcje sieciowe i stabilizujące:
+* **Aktualizacje OTA (Over-The-Air):** Urządzenie potrafi samo połączyć się z GitHubem, sprawdzić dostępność nowej wersji i bezpiecznie pobrać nowe oprogramowanie przez WiFi (z ładnym paskiem postępu na ekranie!).
+* **Fail-Safe WiFi (Ochrona przed awariami sieci):** Urządzenie nie zawiesza się przy braku internetu. Po utracie sygnału cierpliwie puka do routera przez 5 minut (animacja kropek), a jeśli router nie odpowie, stawia własny awaryjny hotspot na 10 minut.
+* **Przycisk "Resetuj WiFi":** Do Web Panelu dodano czerwony przycisk bezpieczeństwa, pozwalający wyczyścić starą sieć jednym kliknięciem (idealne przy przenoszeniu urządzenia np. na działkę).
+* **Zgodność ze standardami APRS:** Zmieniono typ ramki na eksperymentalny `APZESP` oraz poprawiono ścieżkę dla bramek sieciowych na `TCPIP*`.
+* **Ochrona pamięci (Buffer Overflow):** Zabezpieczono wszystkie pola tekstowe (np. bardzo długie komentarze), dzięki czemu błędy wprowadzania danych nie powodują już "zerowania" współrzędnych geograficznych.
 
 ## 🌟 Funkcjonalności
 
@@ -123,7 +131,14 @@ Gdy urządzenie odbierze nowy pakiet, przełączy się na 12 sekund w tryb szcze
 </p>
 
 ### Zmiana Ustawień (Web Panel)
-Gdy urządzenie jest połączone z Twoją siecią, wpisz jego adres IP (widoczny na dole ekranu OLED) w przeglądarce. Otrzymasz dostęp do panelu, gdzie możesz zmienić promień filtra, ikonę lub komentarz bez resetowania urządzenia.
+Gdy urządzenie jest połączone z Twoją siecią, wpisz jego adres IP (widoczny na dole ekranu OLED) w przeglądarce. Otrzymasz dostęp do panelu, gdzie możesz zmienić promień filtra, ikonę lub komentarz bez resetowania urządzenia. Z poziomu panelu możesz też zainicjować awaryjny reset ustawień WiFi.
+
+### Aktualizacje OTA (Over-The-Air)
+Urządzenie wspiera aktualizacje przez internet. Jeśli nowa wersja zostanie opublikowana na GitHubie, urządzenie po restarcie automatycznie ją pobierze i zainstaluje, pokazując postęp na ekranie OLED.
+
+<p align="center">
+  <img src="img/update_2.42.jpg" width="400" alt="Ekran aktualizacji OTA">
+</p>
 
 ## 📜 Licencje i Odpowiedzialność
 

@@ -29,18 +29,15 @@
 #include <FS.h>         
 #include <LittleFS.h>   
 #include <ArduinoJson.h> 
+#include <ESP8266httpUpdate.h>
+#include <WiFiClientSecure.h>
 
-// ===================================
-// 0. GRAFIKA EKRANU STARTOWEGO
-// ===================================
+const String CURRENT_VERSION = "1.3";
 
+const char* VERSION_URL = "https://raw.githubusercontent.com/PrimeNodeSVX/APRS_MON_2.42/main/version.txt";
+const char* FIRMWARE_URL = "https://raw.githubusercontent.com/PrimeNodeSVX/APRS_MON_2.42/main/firmware.bin";
 static const unsigned char image_aprsfi_logo_mid_tr_bits[] = {0x00,0x00,0x00,0x00,0x00,0x04,0x00,0x00,0x00,0x00,0x00,0x06,0x00,0x00,0xe0,0x3f,0x00,0x03,0x00,0x00,0xf8,0xff,0x00,0x01,0x00,0x00,0xfc,0xff,0x81,0x00,0x00,0x00,0xfe,0xff,0xc1,0x00,0x00,0x00,0xfe,0xff,0xc3,0x00,0x00,0x00,0xff,0xff,0xc3,0x00,0x00,0x00,0xff,0xff,0x47,0x00,0x00,0x80,0xff,0xff,0x67,0x00,0x00,0xc0,0xff,0xff,0x6f,0x00,0xe0,0xff,0xff,0xff,0xff,0x01,0xf8,0xff,0xff,0xff,0xff,0x03,0xfc,0xff,0xff,0xff,0xff,0x07,0xfe,0xff,0xff,0xff,0xff,0x0f,0xff,0xff,0xff,0xff,0xff,0x0f,0xff,0xff,0xff,0xff,0xff,0x1f,0xff,0xff,0xff,0xff,0xff,0x1f,0xff,0xff,0xff,0xff,0xff,0x1f,0xff,0xff,0xff,0xff,0xff,0x1f,0xff,0xff,0xff,0xff,0xff,0x0f,0xfe,0xff,0xff,0xff,0xff,0x0f,0xfc,0xff,0xff,0xff,0xff,0x07,0x00,0xff,0x00,0x00,0xff,0x00,0x00,0x7e,0x00,0x00,0x7e,0x00,0x00,0x38,0x00,0x00,0x3c,0x00};
 static const unsigned char image_Layer_3_bits[] = {0x0f,0x00,0x00,0x00,0x00,0x09,0x00,0x00,0x00,0x00,0x0b,0x00,0x00,0x00,0x00,0x0f,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x0f,0x00,0x80,0x0f,0xc0,0x30,0x00,0x60,0x30,0x60,0x60,0x00,0x30,0x60,0x00,0x00,0x00,0x20,0x00};
-
-
-// ===================================
-// 1. KONFIGURACJA SPRZĘTOWA I SIECIOWA
-// ===================================
 
 char my_callsign[12] = "'Znak'-X"; 
 char aprs_pass[8] = "--";
@@ -62,13 +59,9 @@ const int SCROLL_SPEED_MS = 100;
 const int SCROLL_PIXEL_STEP = 1;   
 
 WiFiClient client;
-U8G2_SSD1309_128X64_NONAME0_F_4W_SW_SPI u8g2(U8G2_R0, /* clock=*/ D5, /* data=*/ D7, /* cs=*/ D8, /* dc=*/ D6, /* reset=*/ D0);
+U8G2_SSD1309_128X64_NONAME0_F_4W_SW_SPI u8g2(U8G2_R0, /* clock=*/ D5, /* data=*/ D7, /* cs=*/ D8, /* dc=*/ D6, /* reset=*/ D0); 
 WiFiManager wifiManager;
 ESP8266WebServer server(80); 
-
-// ===================================
-// 2. STRUKTURY I ZMIENNE GLOBALNE
-// ===================================
 
 bool shouldSaveConfig = false; 
 
@@ -87,17 +80,13 @@ int lastStationsCount = 0;
 
 unsigned long lastBeaconMillis = 0;
 unsigned long lastPacketMillis = 0; 
-
+unsigned long lastAprsConnectAttempt = 0;
 int displayMode = 1;
 unsigned long singleStationTimer = 0; 
 APRSStation currentSingleStation; 
 
 unsigned long lastScrollMillis = 0;
 int currentScrollY = 0; 
-
-// ===================================
-// 3. FUNKCJE POMOCNICZE WYSWIETLANIA
-// ===================================
 
 u8g2_uint_t u8g2_center_x(const char* s) {
   return (u8g2.getDisplayWidth() - u8g2.getStrWidth(s)) / 2;
@@ -153,19 +142,11 @@ void drawBearingArrow(float bearing) {
     u8g2.setCursor(cx + radius + 2, cy + 3); u8g2.print("E");
 }
 
-// ===================================
-// 3b. FUNKCJA BEZPIECZNEJ KONWERSJI
-// ===================================
-
 float safeToFloat(const char* str) {
   String s = str;
   s.replace(',', '.'); 
   return s.toFloat();
 }
-
-// ===================================
-// 4. FUNKCJE WYSWIETLANIA EKRANÓW
-// ===================================
 
 void displaySplashScreen() {
   u8g2.begin(); 
@@ -181,7 +162,8 @@ void displaySplashScreen() {
   u8g2.drawStr(17, 40, "APRS");
   u8g2.drawStr(53, 51, "Monitor");
   u8g2.setFont(u8g2_font_5x8_tr);
-  u8g2.drawStr(42, 61, "By SQ7UTP");
+  String bottomText = "By SQ7UTP V" + CURRENT_VERSION;
+  u8g2.drawStr(u8g2_center_x(bottomText.c_str()), 61, bottomText.c_str());
   u8g2.sendBuffer();
   delay(3000); 
 }
@@ -200,8 +182,7 @@ void displayProgressScreen(int step, const char* message) {
     int progress_y = 50;
     int progress_height = 8;
     int radius = 3; 
-
-    int fill_amount = (progress_width * step) / 4; 
+    int fill_amount = (progress_width * step) / 5; 
     
     u8g2.drawRFrame(progress_x, progress_y, progress_width, progress_height, radius);
     
@@ -356,10 +337,6 @@ void displaySingleStationScreen() {
     u8g2.sendBuffer();
 }
 
-// ========================================
-// 5. ZAPIS/ODCZYT KONFIGURACJI Z LITTLEFS
-// ========================================
-
 void saveConfigCallback () {
   Serial.println("Wymagany zapis konfiguracji.");
   shouldSaveConfig = true;
@@ -378,13 +355,13 @@ void loadConfig() {
 
       if (!error) {
         Serial.println("Wczytano konfiguracje z FS.");
-        strcpy(my_callsign, json["callsign"] | my_callsign);
-        strcpy(aprs_pass, json["aprspass"] | aprs_pass);
-        strcpy(my_lat_str, json["mylat"] | my_lat_str);
-        strcpy(my_lon_str, json["mylon"] | my_lon_str);
-        strcpy(beacon_comment, json["comment"] | beacon_comment);
-        strcpy(aprs_symbol, json["symbol"] | aprs_symbol);
-        strcpy(aprs_filter_range, json["filter"] | aprs_filter_range);
+        strlcpy(my_callsign, json["callsign"] | my_callsign, sizeof(my_callsign));
+        strlcpy(aprs_pass, json["aprspass"] | aprs_pass, sizeof(aprs_pass));
+        strlcpy(my_lat_str, json["mylat"] | my_lat_str, sizeof(my_lat_str));
+        strlcpy(my_lon_str, json["mylon"] | my_lon_str, sizeof(my_lon_str));
+        strlcpy(beacon_comment, json["comment"] | beacon_comment, sizeof(beacon_comment));
+        strlcpy(aprs_symbol, json["symbol"] | aprs_symbol, sizeof(aprs_symbol));
+        strlcpy(aprs_filter_range, json["filter"] | aprs_filter_range, sizeof(aprs_filter_range));
       } else {
         Serial.println("Blad parsowania JSON, uzywam domyslnych wartosci.");
       }
@@ -418,10 +395,6 @@ void saveConfig() {
   }
   configFile.close();
 }
-
-// ===================================
-// 6. FUNKCJE SERWERA WWW
-// ===================================
 
 void handleRoot() {
 
@@ -519,20 +492,25 @@ void handleRoot() {
   content += String(aprs_filter_range);
   content += F("' maxlength='5'>");
   content += F("<button type='submit'>Zapisz i Restartuj Urzadzenie</button>");
-  content += F("</form></div></body></html>");
+  content += F("</form>");
+  content += F("<hr style='margin-top: 30px;'>");
+  content += F("<h3 style='color: #d9534f; border-bottom: 2px solid #d9534f;'>Opcje zaawansowane</h3>");
+  content += F("<form action='/resetwifi' method='get' onsubmit=\"return confirm('Czy na pewno chcesz usunac zapisana siec WiFi i zrestartowac urzadzenie?');\">");
+  content += F("<button type='submit' style='background-color: #d9534f;'>Resetuj Ustawienia WiFi</button>");
+  content += F("</form>");
+  content += F("</div></body></html>");
   
   server.send(200, "text/html", content);
 }
 
 void handleSave() {
-
-  if (server.hasArg("callsign")) strcpy(my_callsign, server.arg("callsign").c_str());
-  if (server.hasArg("aprspass")) strcpy(aprs_pass, server.arg("aprspass").c_str());
-  if (server.hasArg("mylat")) strcpy(my_lat_str, server.arg("mylat").c_str());
-  if (server.hasArg("mylon")) strcpy(my_lon_str, server.arg("mylon").c_str());
-  if (server.hasArg("comment")) strcpy(beacon_comment, server.arg("comment").c_str());
-  if (server.hasArg("symbol")) strcpy(aprs_symbol, server.arg("symbol").c_str());
-  if (server.hasArg("filter")) strcpy(aprs_filter_range, server.arg("filter").c_str());
+  if (server.hasArg("callsign")) strlcpy(my_callsign, server.arg("callsign").c_str(), sizeof(my_callsign));
+  if (server.hasArg("aprspass")) strlcpy(aprs_pass, server.arg("aprspass").c_str(), sizeof(aprs_pass));
+  if (server.hasArg("mylat")) strlcpy(my_lat_str, server.arg("mylat").c_str(), sizeof(my_lat_str));
+  if (server.hasArg("mylon")) strlcpy(my_lon_str, server.arg("mylon").c_str(), sizeof(my_lon_str));
+  if (server.hasArg("comment")) strlcpy(beacon_comment, server.arg("comment").c_str(), sizeof(beacon_comment));
+  if (server.hasArg("symbol")) strlcpy(aprs_symbol, server.arg("symbol").c_str(), sizeof(aprs_symbol));
+  if (server.hasArg("filter")) strlcpy(aprs_filter_range, server.arg("filter").c_str(), sizeof(aprs_filter_range));
   
   shouldSaveConfig = true; 
 
@@ -540,9 +518,105 @@ void handleSave() {
   server.send(200, "text/plain", message);
 }
 
-// ===================================
-// 7. LOGIKA WIFI MANAGER
-// ===================================
+void handleResetWifi() {
+
+  String message = "<!DOCTYPE html><html><head><meta charset='utf-8'><title>Reset WiFi</title></head><body style='background-color: #222; color: #EEE; font-family: sans-serif; text-align: center; padding: 50px;'>";
+  message += "<h2>Ustawienia WiFi zostaly wykasowane!</h2>";
+  message += "<p>Urzadzenie uruchomi sie ponownie za chwile.</p>";
+  message += "<p>Polacz sie z siecia <b>APRS-SETUP</b>, aby wprowadzic nowe haslo.</p></body></html>";
+  
+  server.send(200, "text/html", message);
+  Serial.println("Zadanie resetu WiFi ze strony WWW! Kasowanie...");
+  delay(1000);
+  wifiManager.resetSettings(); 
+  delay(1000);
+  ESP.restart(); 
+}
+
+void checkForUpdates() {
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("Brak WiFi, pomijam sprawdzanie aktualizacji.");
+    return;
+  }
+
+  displayProgressScreen(3, "Sprawdzam OTA...");
+  Serial.println("Sprawdzanie aktualizacji OTA na GitHubie...");
+
+  WiFiClientSecure client;
+  client.setInsecure();
+
+  HTTPClient https;
+  if (https.begin(client, VERSION_URL)) {
+    int httpCode = https.GET();
+    
+    if (httpCode == HTTP_CODE_OK) {
+      String newVersion = https.getString();
+      newVersion.trim();
+      Serial.println("Obecna wersja: " + CURRENT_VERSION);
+      Serial.println("Wersja na GitHub: " + newVersion);
+
+      if (newVersion != CURRENT_VERSION && newVersion.length() > 0 && newVersion.length() < 10) {
+        Serial.println("Znaleziono inna wersje! Rozpoczynam pobieranie...");
+        u8g2.clearBuffer();
+        u8g2.setFont(u8g2_font_ncenB08_tr);
+        u8g2.drawStr(u8g2_center_x("AKTUALIZACJA OTA"), 15, "AKTUALIZACJA OTA");
+        u8g2.drawHLine(0, 18, 128);
+
+        u8g2.setFont(u8g2_font_6x12_tr);
+        u8g2.drawStr(0, 32, ("Instaluje: V" + newVersion).c_str());
+        u8g2.setFont(u8g2_font_ncenB08_tr); 
+        u8g2.drawStr(u8g2_center_x("Prosze czekac..."), 46, "Prosze czekac...");
+        u8g2.sendBuffer();
+
+        ESPhttpUpdate.onProgress([](int cur, int total) {
+            int percent = (cur * 100) / total;
+            int active_dots = (percent * 5) / 100;
+
+            u8g2.setDrawColor(0);
+            u8g2.drawBox(0, 52, 128, 12); 
+            u8g2.setDrawColor(1);
+
+            int start_x = 44;
+            for (int i = 0; i < 5; i++) {
+                if (i < active_dots) {
+                    u8g2.drawDisc(start_x + (i * 10), 58, 3);
+                } else {
+                    u8g2.drawCircle(start_x + (i * 10), 58, 3);
+                }
+            }
+            
+            u8g2.setFont(u8g2_font_4x6_tr);
+            u8g2.setCursor(102, 61);
+            u8g2.print(percent);
+            u8g2.print("%");
+
+            u8g2.sendBuffer();
+        });
+
+        t_httpUpdate_return ret = ESPhttpUpdate.update(client, FIRMWARE_URL);
+
+        switch (ret) {
+          case HTTP_UPDATE_FAILED:
+            Serial.printf("Blad aktualizacji (%d): %s\n", ESPhttpUpdate.getLastError(), ESPhttpUpdate.getLastErrorString().c_str());
+            break;
+          case HTTP_UPDATE_NO_UPDATES:
+            Serial.println("Brak aktualizacji.");
+            break;
+          case HTTP_UPDATE_OK:
+            Serial.println("Aktualizacja zakonczona sukcesem.");
+            break;
+        }
+      } else {
+        Serial.println("Wersja jest aktualna.");
+      }
+    } else {
+      Serial.printf("Blad pobierania pliku version.txt. Kod HTTP: %d\n", httpCode);
+    }
+    https.end();
+  } else {
+    Serial.println("Nie udalo sie polaczyc z serwerem aktualizacji.");
+  }
+}
 
 void setupWiFi() {
 
@@ -559,9 +633,8 @@ void setupWiFi() {
   wifiManager.setCustomHeadElement(style_minified);
 
   const char* page_content = 
-    "<div class='c'><img src='data:image/png;base64,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'></div>"
-    "<h3 style='color:#4CAF50'>Konfiguracja APRS</h3>"
-    "<p style='color:#ccc;font-size:0.9em'>Logowanie APRS-IS i koordynaty.</p>";
+    "<div class='c'><h3 style='color:#4CAF50'>Konfiguracja APRS</h3>"
+    "<p style='color:#ccc;font-size:0.9em'>Logowanie APRS-IS i koordynaty.</p></div>";
 
   WiFiManagerParameter custom_content(page_content);
   WiFiManagerParameter custom_callsign("callsign", "1. Znak + SSID ( Np. SQ7UTP-X)", my_callsign, 12);
@@ -573,7 +646,6 @@ void setupWiFi() {
   WiFiManagerParameter custom_filter_range("filter", "7. Promien filtra (km)", aprs_filter_range, 5, "type='number'"); 
 
   wifiManager.addParameter(&custom_content);
-  
   wifiManager.addParameter(&custom_callsign);
   wifiManager.addParameter(&custom_aprspass);
   wifiManager.addParameter(&custom_lat);
@@ -581,6 +653,9 @@ void setupWiFi() {
   wifiManager.addParameter(&custom_symbol);
   wifiManager.addParameter(&custom_comment);
   wifiManager.addParameter(&custom_filter_range);
+  
+  wifiManager.setConfigPortalTimeout(600);
+  
   wifiManager.setAPCallback([](WiFiManager* wm) {
     u8g2.clearBuffer();
     u8g2.setFont(u8g2_font_6x12_tr); 
@@ -616,17 +691,13 @@ void setupWiFi() {
   strcpy(beacon_comment, custom_comment.getValue());
   strcpy(aprs_symbol, custom_symbol.getValue());
   strcpy(aprs_filter_range, custom_filter_range.getValue()); 
-
+  
   server.on("/", handleRoot);
   server.on("/save", handleSave);
+  server.on("/resetwifi", handleResetWifi);
   server.begin();
   Serial.println("Serwer HTTP aktywny pod adresem: " + WiFi.localIP().toString());
 }
-
-
-// ===================================
-// 8. FUNKCJE APRS I LOGIKI
-// ===================================
 
 float parseAPRSCoord(String coord) {
     if (coord.length() < 6) return 0.0;
@@ -723,7 +794,7 @@ void connectToAPRS() {
     
     String filterRange = String(aprs_filter_range); 
     
-    String login = String("user ") + String(my_callsign) + " pass " + String(aprs_pass) + " vers ESP8266APRSMonitor V1.2 filter r/" +
+    String login = String("user ") + String(my_callsign) + " pass " + String(aprs_pass) + " vers ESP8266APRSMonitor V1.3 filter r/" +
                    String(myLat, 2) + "/" + String(myLon, 2) + "/" + filterRange + "\r\n";
     client.print(login);
     client.flush();
@@ -761,7 +832,7 @@ void sendBeacon() {
 
   String pos = formatPosition(myLat, myLon);
   
-  String beacon = String(my_callsign) + ">APRS,WIDE1-1:@" + timeStr + pos + String(beacon_comment) + "\r\n";
+  String beacon = String(my_callsign) + ">APZESP,TCPIP*:@" + timeStr + pos + String(beacon_comment) + "\r\n";
 
   Serial.print("Wysylam beacon: ");
   Serial.print(beacon);
@@ -857,14 +928,56 @@ void processAPRSpacket(String packet) {
     addStationToBuffer(newStation);
 }
 
+void handleWifiLoss() {
+  Serial.println("Utracono WiFi! Rozpoczynam procedure awaryjna...");
+  unsigned long startAttemptTime = millis();
+  unsigned long lastReconnectRequest = 0;
+  int waveStep = 0;
 
-// ===================================
-// 9. SETUP I LOOP
-// ===================================
+  while (WiFi.status() != WL_CONNECTED && millis() - startAttemptTime < 300000) {
+    
+    if (millis() - lastReconnectRequest >= 5000) {
+      Serial.println("Pukam do starej sieci WiFi...");
+      WiFi.reconnect(); 
+      lastReconnectRequest = millis();
+    }
+
+    u8g2.clearBuffer();
+    u8g2.setFont(u8g2_font_ncenB08_tr); 
+    u8g2.drawStr(u8g2_center_x("Brak polaczenia"), 20, "Brak polaczenia");
+    u8g2.drawStr(u8g2_center_x("z WiFi!"), 35, "z WiFi!");
+    u8g2.setFont(u8g2_font_6x12_tr);
+    u8g2.drawStr(u8g2_center_x("Wznawiam polaczenie"), 50, "Wznawiam polaczenie");
+
+    int startX = 48;
+    for (int i = 0; i < 4; i++) {
+      int yOffset = 0;
+      if (i == waveStep) {
+        yOffset = -4;
+      }
+      u8g2.drawDisc(startX + (i * 10), 62 + yOffset, 2);
+    }
+    
+    u8g2.sendBuffer();
+
+    waveStep++;
+    if (waveStep >= 4) waveStep = 0;
+
+    delay(250);
+  }
+
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("Minelo 5 minut. Restartuje w celu uruchomienia trybu AP!");
+    ESP.restart();
+  } else {
+    Serial.println("Udalo sie odzyskac polaczenie WiFi przed uplywem 5 minut!");
+    lastPacketMillis = millis();
+  }
+}
 
 void setup() {
   Serial.begin(115200);
-  Serial.println("\nStart ESP8266 APRS Monitor (Wersja 2.9)");
+  Serial.println("\nStart ESP8266 APRS Monitor (Wersja " + CURRENT_VERSION + ")");
 
   displaySplashScreen();
   displayProgressScreen(1, "LittleFS...");
@@ -890,23 +1003,21 @@ void setup() {
   delay(100); 
   
   wifiManager.setSaveConfigCallback(saveConfigCallback);
-  
   displayProgressScreen(2, "WiFi Manager...");
-  setupWiFi(); 
-  
-  displayProgressScreen(3, "Pobieranie czasu NTP...");
+  setupWiFi();
+  Serial.println("Oczekiwanie na stabilizacje sieci...");
+  delay(3000);
+  checkForUpdates();
+  displayProgressScreen(4, "Pobieranie czasu NTP...");
   Serial.println("Synchronizacja NTP...");
   configTime("CET-1CEST,M3.5.0,M10.5.0/3", "vega.cbk.poznan.pl");
   delay(3000);
-  
-  displayProgressScreen(4, "Laczenie z APRS...");
+  displayProgressScreen(5, "Laczenie z APRS...");
   connectToAPRS();
   delay(1000); 
-
   Serial.println("Inicjalizacja zakonczona. Gotowy do pracy.");
-  displayProgressScreen(4, "Gotowy do pracy!"); 
+  displayProgressScreen(5, "Gotowy do pracy!"); 
   delay(1000);
-  
   sendBeacon();
   lastBeaconMillis = millis();
 }
@@ -942,14 +1053,16 @@ void loop() {
         if (client.connected()) {
             Serial.println("Brak pakietow przez 2 minuty. Resetowanie polaczenia...");
             client.stop(); 
-        } else {
+        } 
+        
+        if (millis() - lastAprsConnectAttempt > 10000) {
             Serial.println("Polaczenie APRS zerwane, proba ponownego laczenia...");
+            connectToAPRS();
+            lastAprsConnectAttempt = millis();
+            lastPacketMillis = millis(); 
         }
-        connectToAPRS();
-        lastPacketMillis = millis(); 
     } else {
-        Serial.println("Brak WiFi. Restartuje WiFiManager w celu rekonfiguracji.");
-        setupWiFi(); 
+        handleWifiLoss();
     }
   }
 
